@@ -312,6 +312,22 @@ func (c *ARC) remove(key interface{}) bool {
 	return false
 }
 
+func (c *ARC) Walk(checkExpired bool, fn func(k, v interface{}) (stop bool)) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	now := time.Now()
+	for k, item := range c.items {
+		if checkExpired && item.IsExpired(&now) {
+			continue
+		}
+		if fn(k, item.value) {
+			return true
+		}
+	}
+	return false
+}
+
 // GetALL returns all key-value pairs in the cache.
 func (c *ARC) GetALL(checkExpired bool) map[interface{}]interface{} {
 	c.mu.RLock()

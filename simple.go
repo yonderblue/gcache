@@ -229,6 +229,10 @@ func (c *SimpleCache) keys() []interface{} {
 	return keys
 }
 
+func (c *SimpleCache) Walk(checkExpired bool, fn func(k, v interface{}) (stop bool)) bool {
+	panic("not implemented")
+}
+
 // GetALL returns all key-value pairs in the cache.
 func (c *SimpleCache) GetALL(checkExpired bool) map[interface{}]interface{} {
 	c.mu.RLock()

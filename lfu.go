@@ -301,6 +301,10 @@ func (c *LFUCache) keys() []interface{} {
 	return keys
 }
 
+func (c *LFUCache) Walk(checkExpired bool, fn func(k, v interface{}) (stop bool)) bool {
+	panic("not implemented")
+}
+
 // GetALL returns all key-value pairs in the cache.
 func (c *LFUCache) GetALL(checkExpired bool) map[interface{}]interface{} {
 	c.mu.RLock()

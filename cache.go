@@ -30,6 +30,8 @@ type Cache interface {
 	// GetIFPresent returns the value for the specified key if it is present in the cache.
 	// Return KeyNotFoundError if the key is not present.
 	GetIFPresent(key interface{}) (interface{}, error)
+	// Only implemented for ARC. Returns if stopped.
+	Walk(checkExpired bool, _ func(k, v interface{}) (stop bool)) bool
 	// GetAll returns a map containing all key-value pairs in the cache.
 	GetALL(checkExpired bool) map[interface{}]interface{}
 	get(key interface{}, onLoad bool) (interface{}, error)
