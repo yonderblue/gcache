@@ -34,12 +34,12 @@ func (c *ARC) init() {
 	c.b2 = newARCList()
 }
 
-func (c *ARC) replace(key interface{}) {
+func (c *ARC) replace(item *arcItem) {
 	if !c.isCacheFull() {
 		return
 	}
-	var old interface{}
-	if c.t1.Len() > 0 && ((c.b2.Has(key) && c.t1.Len() == c.part) || (c.t1.Len() > c.part)) {
+	var old *arcItem
+	if c.t1.Len() > 0 && ((c.b2.Has(item) && c.t1.Len() == c.part) || (c.t1.Len() > c.part)) {
 		old = c.t1.RemoveTail()
 		c.b1.PushFront(old)
 	} else if c.t2.Len() > 0 {
@@ -49,11 +49,11 @@ func (c *ARC) replace(key interface{}) {
 		old = c.t1.RemoveTail()
 		c.b1.PushFront(old)
 	}
-	item, ok := c.items[old]
-	if ok {
-		delete(c.items, old)
+	oldKey := *old.key
+	if _, ok := c.items[oldKey]; ok {
+		delete(c.items, oldKey)
 		if c.evictedFunc != nil {
-			c.evictedFunc(item.key, item.value)
+			c.evictedFunc(oldKey, old.value)
 		}
 	}
 }
@@ -94,8 +94,8 @@ func (c *ARC) set(key, value interface{}) (interface{}, error) {
 	} else {
 		item = &arcItem{
 			clock: c.clock,
-			key:   key,
 			value: value,
+			key:   &key,
 		}
 		c.items[key] = item
 	}
@@ -111,37 +111,37 @@ func (c *ARC) set(key, value interface{}) (interface{}, error) {
 		}
 	}()
 
-	if c.t1.Has(key) || c.t2.Has(key) {
+	if c.t1.Has(item) || c.t2.Has(item) {
 		return item, nil
 	}
 
-	if elt := c.b1.Lookup(key); elt != nil {
+	if elt := c.b1.Lookup(item); elt != nil {
 		c.setPart(minInt(c.size, c.part+maxInt(c.b2.Len()/c.b1.Len(), 1)))
-		c.replace(key)
-		c.b1.Remove(key, elt)
-		c.t2.PushFront(key)
+		c.replace(item)
+		c.b1.Remove(item, elt)
+		c.t2.PushFront(item)
 		return item, nil
 	}
 
-	if elt := c.b2.Lookup(key); elt != nil {
+	if elt := c.b2.Lookup(item); elt != nil {
 		c.setPart(maxInt(0, c.part-maxInt(c.b1.Len()/c.b2.Len(), 1)))
-		c.replace(key)
-		c.b2.Remove(key, elt)
-		c.t2.PushFront(key)
+		c.replace(item)
+		c.b2.Remove(item, elt)
+		c.t2.PushFront(item)
 		return item, nil
 	}
 
 	if c.isCacheFull() && c.t1.Len()+c.b1.Len() == c.size {
 		if c.t1.Len() < c.size {
 			c.b1.RemoveTail()
-			c.replace(key)
+			c.replace(item)
 		} else {
-			pop := c.t1.RemoveTail()
-			item, ok := c.items[pop]
-			if ok {
-				delete(c.items, pop)
+			popItem := c.t1.RemoveTail()
+			popKey := *popItem.key
+			if _, ok := c.items[popKey]; ok {
+				delete(c.items, popKey)
 				if c.evictedFunc != nil {
-					c.evictedFunc(item.key, item.value)
+					c.evictedFunc(popKey, popItem.value)
 				}
 			}
 		}
@@ -155,10 +155,10 @@ func (c *ARC) set(key, value interface{}) (interface{}, error) {
 					c.b1.RemoveTail()
 				}
 			}
-			c.replace(key)
+			c.replace(item)
 		}
 	}
-	c.t1.PushFront(key)
+	c.t1.PushFront(item)
 	return item, nil
 }
 
@@ -196,37 +196,38 @@ func (c *ARC) get(key interface{}, onLoad bool) (interface{}, error) {
 func (c *ARC) getValue(key interface{}, onLoad bool) (interface{}, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if elt := c.t1.Lookup(key); elt != nil {
-		c.t1.Remove(key, elt)
-		item := c.items[key]
-		if !item.IsExpired(nil) {
-			c.t2.PushFront(key)
-			if !onLoad {
-				c.stats.IncrHitCount()
-			}
-			return item.value, nil
-		} else {
-			delete(c.items, key)
-			c.b1.PushFront(key)
-			if c.evictedFunc != nil {
-				c.evictedFunc(item.key, item.value)
+
+	if item, ok := c.items[key]; ok {
+		if elt := c.t1.Lookup(item); elt != nil {
+			c.t1.Remove(item, elt)
+			if !item.IsExpired(nil) {
+				c.t2.PushFront(item)
+				if !onLoad {
+					c.stats.IncrHitCount()
+				}
+				return item.value, nil
+			} else {
+				delete(c.items, key)
+				c.b1.PushFront(item)
+				if c.evictedFunc != nil {
+					c.evictedFunc(key, item.value)
+				}
 			}
 		}
-	}
-	if elt := c.t2.Lookup(key); elt != nil {
-		item := c.items[key]
-		if !item.IsExpired(nil) {
-			c.t2.MoveToFront(elt)
-			if !onLoad {
-				c.stats.IncrHitCount()
-			}
-			return item.value, nil
-		} else {
-			delete(c.items, key)
-			c.t2.Remove(key, elt)
-			c.b2.PushFront(key)
-			if c.evictedFunc != nil {
-				c.evictedFunc(item.key, item.value)
+		if elt := c.t2.Lookup(item); elt != nil {
+			if !item.IsExpired(nil) {
+				c.t2.MoveToFront(elt)
+				if !onLoad {
+					c.stats.IncrHitCount()
+				}
+				return item.value, nil
+			} else {
+				delete(c.items, key)
+				c.t2.Remove(item, elt)
+				c.b2.PushFront(item)
+				if c.evictedFunc != nil {
+					c.evictedFunc(key, item.value)
+				}
 			}
 		}
 	}
@@ -288,26 +289,26 @@ func (c *ARC) Remove(key interface{}) bool {
 }
 
 func (c *ARC) remove(key interface{}) bool {
-	if elt := c.t1.Lookup(key); elt != nil {
-		c.t1.Remove(key, elt)
-		item := c.items[key]
-		delete(c.items, key)
-		c.b1.PushFront(key)
-		if c.evictedFunc != nil {
-			c.evictedFunc(key, item.value)
+	if item, ok := c.items[key]; ok {
+		if elt := c.t1.Lookup(item); elt != nil {
+			c.t1.Remove(item, elt)
+			delete(c.items, key)
+			c.b1.PushFront(item)
+			if c.evictedFunc != nil {
+				c.evictedFunc(key, item.value)
+			}
+			return true
 		}
-		return true
-	}
 
-	if elt := c.t2.Lookup(key); elt != nil {
-		c.t2.Remove(key, elt)
-		item := c.items[key]
-		delete(c.items, key)
-		c.b2.PushFront(key)
-		if c.evictedFunc != nil {
-			c.evictedFunc(key, item.value)
+		if elt := c.t2.Lookup(item); elt != nil {
+			c.t2.Remove(item, elt)
+			delete(c.items, key)
+			c.b2.PushFront(item)
+			if c.evictedFunc != nil {
+				c.evictedFunc(key, item.value)
+			}
+			return true
 		}
-		return true
 	}
 
 	return false
@@ -364,8 +365,8 @@ func (c *ARC) Purge() {
 	defer c.mu.Unlock()
 
 	if c.purgeVisitorFunc != nil {
-		for _, item := range c.items {
-			c.purgeVisitorFunc(item.key, item.value)
+		for key, item := range c.items {
+			c.purgeVisitorFunc(key, item.value)
 		}
 	}
 
@@ -396,29 +397,29 @@ func (it *arcItem) IsExpired(now *time.Time) bool {
 
 type arcList struct {
 	l    *list.List
-	keys map[interface{}]*list.Element
+	keys map[*arcItem]*list.Element
 }
 
 type arcItem struct {
 	clock      Clock
-	key        interface{}
 	value      interface{}
 	expiration *time.Time
+	key        *interface{}
 }
 
 func newARCList() *arcList {
 	return &arcList{
 		l:    list.New(),
-		keys: make(map[interface{}]*list.Element),
+		keys: make(map[*arcItem]*list.Element),
 	}
 }
 
-func (al *arcList) Has(key interface{}) bool {
+func (al *arcList) Has(key *arcItem) bool {
 	_, ok := al.keys[key]
 	return ok
 }
 
-func (al *arcList) Lookup(key interface{}) *list.Element {
+func (al *arcList) Lookup(key *arcItem) *list.Element {
 	elt := al.keys[key]
 	return elt
 }
@@ -427,7 +428,7 @@ func (al *arcList) MoveToFront(elt *list.Element) {
 	al.l.MoveToFront(elt)
 }
 
-func (al *arcList) PushFront(key interface{}) {
+func (al *arcList) PushFront(key *arcItem) {
 	if elt, ok := al.keys[key]; ok {
 		al.l.MoveToFront(elt)
 		return
@@ -436,16 +437,16 @@ func (al *arcList) PushFront(key interface{}) {
 	al.keys[key] = elt
 }
 
-func (al *arcList) Remove(key interface{}, elt *list.Element) {
+func (al *arcList) Remove(key *arcItem, elt *list.Element) {
 	delete(al.keys, key)
 	al.l.Remove(elt)
 }
 
-func (al *arcList) RemoveTail() interface{} {
+func (al *arcList) RemoveTail() *arcItem {
 	elt := al.l.Back()
 	al.l.Remove(elt)
 
-	key := elt.Value
+	key := elt.Value.(*arcItem)
 	delete(al.keys, key)
 
 	return key
