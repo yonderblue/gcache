@@ -2,6 +2,8 @@ package gcache
 
 import (
 	"fmt"
+	"hash/fnv"
+	"math/rand"
 	"testing"
 	"time"
 )
@@ -110,5 +112,38 @@ func TestARCHas(t *testing.T) {
 				t.Fatal("should not have test2")
 			}
 		})
+	}
+}
+
+func TestARCRandom(t *testing.T) {
+	const size = 100
+	gc := buildTestCache(t, TYPE_ARC, size)
+
+	rando := rand.New(rand.NewSource(5))
+
+	hash := fnv.New64a()
+
+	for _, nKeys := range []int{size / 2, size, size * 2} {
+		var keys []int
+		for i := 0; i < nKeys; i++ {
+			keys = append(keys, rand.Int())
+		}
+
+		for i := 0; i < 100_000; i++ {
+			if rando.Intn(2) == 0 {
+				k := keys[rando.Intn(len(keys))]
+				gc.Set(k, k+1)
+			}
+			if rando.Intn(2) == 0 {
+				k := keys[rando.Intn(len(keys))]
+				v, err := gc.Get(k)
+				hash.Write([]byte(fmt.Sprint(k, v, err)))
+			}
+		}
+	}
+
+	got := hash.Sum64()
+	if got != 16111254380956458052 {
+		t.Fatal(got)
 	}
 }
